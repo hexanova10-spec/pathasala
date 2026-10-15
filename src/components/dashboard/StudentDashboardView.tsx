@@ -26,6 +26,38 @@ import {
   GraduationCap
 } from 'lucide-react';
 
+const GREETINGS_BY_LANGUAGE: Record<string, string> = {
+  odia: 'ନମସ୍କାର',
+  hindi: 'नमस्ते',
+  english: 'Hello',
+  urdu: 'السلام علیکم',
+  telugu: 'నమస్కారం',
+  marathi: 'नमस्कार',
+  kannada: 'ನಮಸ್ಕಾರ',
+  tamil: 'வணக்கம்',
+  bengali: 'নমস্কার',
+  gujarati: 'નમસ્તે',
+  punjabi: 'ਸਤ ਸ੍ਰੀ ਅਕਾਲ',
+  malayalam: 'നമസ്കാരം',
+  assamese: 'নমস্কাৰ',
+  sanskrit: 'नमस्ते',
+  kashmiri: 'آداب',
+  konkani: 'नमस्कार',
+  nepali: 'नमस्कार',
+  sindhi: 'سلام',
+  manipuri: 'খুরুমজরি',
+  bodo: 'नमस्कार',
+  dogri: 'नमस्कार',
+  santali: 'ᱡᱚᱦᱟᱨ',
+  maithili: 'प्रणाम'
+};
+
+function getGreeting(language: string | undefined): string {
+  if (!language) return GREETINGS_BY_LANGUAGE.english;
+  const normalized = language.trim().toLowerCase();
+  return GREETINGS_BY_LANGUAGE[normalized] || GREETINGS_BY_LANGUAGE[normalized.split(/[ /-]/)[0]] || GREETINGS_BY_LANGUAGE.english;
+}
+
 interface StudentDashboardViewProps {
   profile: StudentProfile;
   activeSubject: string;
@@ -102,7 +134,7 @@ export const StudentDashboardView: React.FC<StudentDashboardViewProps> = ({
             </div>
 
             <h1 className="text-2xl sm:text-4xl font-extrabold tracking-tight text-white">
-              ନମସ୍କାର, {profile.nickname || profile.name}!
+              {getGreeting(profile.tutorLanguage)}, {profile.nickname || profile.name}!
             </h1>
             <p className="text-[#DFF3E8] text-xs sm:text-sm leading-relaxed">
               Welcome to <strong>PATHASHALA AI</strong>. Personalized educational agent ready for <strong>Class {profile.classNum} ({profile.schoolBoard})</strong> with multilingual guidance in <strong>{profile.tutorLanguage}</strong>.

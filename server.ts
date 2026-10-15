@@ -550,7 +550,8 @@ app.post('/api/auth/login', (req, res) => {
       assignedClasses: user.assignedClasses || [10],
       teachingClasses: user.teachingClasses,
       linkedStudentIds: user.linkedStudentIds,
-      preferredLanguage: user.preferredLanguage
+      preferredLanguage: user.preferredLanguage,
+      preferredSubject: user.preferredSubject
     },
     token: createAccessToken(user)
   });
