@@ -133,7 +133,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         body: JSON.stringify({
           name: regName,
           email: regEmail,
-          identifier: regStudentId,
+          identifier: selectedRole === 'parent' ? '' : regStudentId,
+          linkedStudentId: selectedRole === 'parent' ? regStudentId : undefined,
           school: regSchool,
           assignedClasses: regClasses,
           preferredLanguage: preferredLang,
@@ -148,7 +149,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         localStorage.setItem('pathashala_user', JSON.stringify(data.user));
         localStorage.setItem('pathashala_language', preferredLang);
         localStorage.setItem('pathashala_subject', preferredSubject);
-        setSuccessMessage('Student account created successfully!');
+        setSuccessMessage(selectedRole === 'parent' ? 'Parent account created. We will link the student account if the Student ID matches.' : selectedRole === 'teacher' ? 'Teacher account created successfully!' : 'Student account created successfully!');
         setTimeout(() => {
           onSuccess(data.user, selectedRole);
           onClose();

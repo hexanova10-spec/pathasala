@@ -559,7 +559,7 @@ app.post('/api/auth/login', (req, res) => {
 
 // Auth Register (STRICT TWO-CLASS LIMIT ENFORCED)
 app.post('/api/auth/register', (req, res) => {
-  const { name, email, identifier, school, assignedClasses = [], preferredLanguage, preferredSubject, role = 'student', password } = req.body || {};
+  const { name, email, identifier, linkedStudentId, school, assignedClasses = [], preferredLanguage, preferredSubject, role = 'student', password } = req.body || {};
 
   if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'Name is required' });
   if (!['student', 'teacher', 'parent'].includes(role)) return res.status(400).json({ error: 'Role must be student, teacher, or parent.' });
@@ -585,13 +585,13 @@ app.post('/api/auth/register', (req, res) => {
     id: newId,
     name,
     email: normalizedEmail || `${name.toLowerCase().replace(/\s+/g, '')}@pathashala.edu`,
-    identifier: identifier || `BSE-2026-${Math.floor(1000 + Math.random() * 9000)}`,
+    identifier: role === 'parent' ? `PAR-2026-${Math.floor(1000 + Math.random() * 9000)}` : (identifier || `BSE-2026-${Math.floor(1000 + Math.random() * 9000)}`),
     school: school || 'Odisha Model School',
     role,
     password: hashPassword(password),
     assignedClasses: role === 'student' ? (assignedClasses.length > 0 ? assignedClasses.slice(0, 2) : [10]) : [],
     teachingClasses: role === 'teacher' ? [10] : undefined,
-    linkedStudentIds: role === 'parent' ? [] : undefined,
+    linkedStudentIds: role === 'parent' ? db.users.filter((student) => student.role === 'student' && [student.id, student.identifier, student.email].some((value) => typeof linkedStudentId === 'string' && value && String(value).toLowerCase() === linkedStudentId.trim().toLowerCase())).map((student) => student.id) : undefined,
     preferredLanguage: preferredLanguage || 'Odia',
     preferredSubject: role === 'student' ? (typeof preferredSubject === 'string' && preferredSubject.trim() ? preferredSubject.trim() : 'Mathematics') : undefined
   };
@@ -651,6 +651,76 @@ function getAuthenticatedUser(req: any) {
     return db.users.find((user) => user.id === payload.sub && user.role === payload.role) || null;
   } catch { return null; }
 }
+
+function publicStudentRecord(student: any) {
+  const { password: _password, ...account } = student;
+  return {
+    ...account,
+    profile: student.profile || null,
+    classNum: student.profile?.classNum || student.assignedClasses?.[0] || 10,
+    assignedClasses: student.profile?.assignedClasses || student.assignedClasses || [],
+    preferredLanguage: student.profile?.tutorLanguage || student.preferredLanguage || 'Odia',
+    preferredSubject: student.profile?.subjects?.[0] || student.preferredSubject || 'Mathematics'
+  };
+}
+
+// Save a student's live profile centrally so other authorized portals can read it.
+app.put('/api/student/profile', (req, res) => {
+  const user = getAuthenticatedUser(req);
+  if (!user) return res.status(401).json({ error: 'Please sign in again to save your profile.' });
+  if (user.role !== 'student') return res.status(403).json({ error: 'Only student accounts can update a student profile.' });
+  const incoming = req.body?.profile;
+  if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+    return res.status(400).json({ error: 'A valid student profile is required.' });
+  }
+  const classes = Array.isArray(incoming.assignedClasses)
+    ? incoming.assignedClasses.map(Number).filter((n: number) => Number.isInteger(n) && n >= 1 && n <= 12).slice(0, 2)
+    : (user.assignedClasses || [10]).slice(0, 2);
+  user.profile = {
+    ...(user.profile || {}),
+    name: user.name,
+    id: user.id,
+    studentId: user.identifier || user.id,
+    email: user.email,
+    schoolName: user.school || incoming.schoolName || '',
+    classNum: Number.isInteger(Number(incoming.classNum)) && Number(incoming.classNum) >= 1 && Number(incoming.classNum) <= 12
+      ? Number(incoming.classNum) : (classes[0] || 10),
+    assignedClasses: classes.length ? classes : [10],
+    tutorLanguage: typeof incoming.tutorLanguage === 'string' ? incoming.tutorLanguage.slice(0, 40) : (user.preferredLanguage || 'Odia'),
+    interfaceLanguage: typeof incoming.interfaceLanguage === 'string' ? incoming.interfaceLanguage.slice(0, 40) : (user.preferredLanguage || 'Odia'),
+    textbookLanguage: typeof incoming.textbookLanguage === 'string' ? incoming.textbookLanguage.slice(0, 40) : (user.preferredLanguage || 'Odia'),
+    subjects: Array.isArray(incoming.subjects) ? incoming.subjects.filter((v: unknown) => typeof v === 'string').slice(0, 12) : [user.preferredSubject || 'Mathematics'],
+    nickname: typeof incoming.nickname === 'string' ? incoming.nickname.slice(0, 80) : user.name.split(/\\s+/)[0],
+    learningGoals: Array.isArray(incoming.learningGoals) ? incoming.learningGoals.filter((v: unknown) => typeof v === 'string').slice(0, 30) : [],
+    accessibility: incoming.accessibility && typeof incoming.accessibility === 'object' ? incoming.accessibility : undefined
+  };
+  user.assignedClasses = classes.length ? classes : [10];
+  user.preferredLanguage = user.profile.tutorLanguage;
+  user.preferredSubject = user.profile.subjects[0] || 'Mathematics';
+  return res.json({ success: true, student: publicStudentRecord(user) });
+});
+
+app.get('/api/teacher/students', (req, res) => {
+  const user = getAuthenticatedUser(req);
+  if (!user) return res.status(401).json({ error: 'Please sign in to view students.' });
+  if (user.role !== 'teacher') return res.status(403).json({ error: 'Only teachers can view the class roster.' });
+  const classes = Array.isArray(user.teachingClasses) ? user.teachingClasses.map(Number) : [];
+  const students = db.users.filter((student) =>
+    student.role === 'student' &&
+    (!user.school || !student.school || student.school === user.school) &&
+    (student.assignedClasses || []).some((cls: number) => classes.includes(Number(cls)))
+  ).map(publicStudentRecord);
+  return res.json({ students });
+});
+
+app.get('/api/parent/children', (req, res) => {
+  const user = getAuthenticatedUser(req);
+  if (!user) return res.status(401).json({ error: 'Please sign in to view linked student data.' });
+  if (user.role !== 'parent') return res.status(403).json({ error: 'Only parent accounts can view linked children.' });
+  const linkedIds = Array.isArray(user.linkedStudentIds) ? user.linkedStudentIds : [];
+  const children = db.users.filter((student) => student.role === 'student' && linkedIds.includes(student.id)).map(publicStudentRecord);
+  return res.json({ children });
+});
 
 function requireTeacher(req: any, res: any) {
   const user = getAuthenticatedUser(req);
