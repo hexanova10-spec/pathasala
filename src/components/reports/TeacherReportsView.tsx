@@ -29,6 +29,8 @@ export const TeacherReportsView: React.FC<TeacherReportsViewProps> = ({ role, pr
   const [studentReports, setStudentReports] = useState<StudentReport[]>(
     INITIAL_STUDENT_REPORTS
   );
+  const [reportSaveError, setReportSaveError] = useState<string | null>(null);
+  const [isSavingReport, setIsSavingReport] = useState(false);
   const [parentReports, setParentReports] = useState<ParentReport[]>(
     INITIAL_PARENT_REPORTS
   );
@@ -39,6 +41,34 @@ export const TeacherReportsView: React.FC<TeacherReportsViewProps> = ({ role, pr
   const [isCreatingReport, setIsCreatingReport] = useState(false);
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [publishSuccessNotice, setPublishSuccessNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadReports = async () => {
+      const token = localStorage.getItem('pathashala_token');
+      if (!token) return;
+      try {
+        const response = await fetch('/api/reports', { headers: { Authorization: `Bearer ${token}` } });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not load reports.');
+        if (cancelled) return;
+        if (role === 'teacher' && Array.isArray(data.studentReports) && data.studentReports.length) {
+          setStudentReports((current) => {
+            const serverReports = data.studentReports as StudentReport[];
+            const serverIds = new Set(serverReports.map((item) => item.id));
+            return [...serverReports, ...current.filter((item) => !serverIds.has(item.id))];
+          });
+        }
+        if (role === 'parent' && Array.isArray(data.parentReports)) {
+          setParentReports(data.parentReports as ParentReport[]);
+        }
+      } catch (error) {
+        if (!cancelled) console.warn('Reports could not be refreshed from the server:', error);
+      }
+    };
+    void loadReports();
+    return () => { cancelled = true; };
+  }, [role]);
 
   // New report form states
   const [reportStudentName, setReportStudentName] = useState('Subhashree Nayak');
@@ -52,6 +82,14 @@ export const TeacherReportsView: React.FC<TeacherReportsViewProps> = ({ role, pr
   const [releasedParentFeedback, setReleasedParentFeedback] = useState(
     'Subhashree is making admirable progress in Class 10. She uses her regional Odia explanations alongside English technical terms very effectively. Please encourage her to take short breaks during evening sessions.'
   );
+  const [newReportStudentId, setNewReportStudentId] = useState('BSE-2026-OD-8819');
+  const [newReportStudentName, setNewReportStudentName] = useState('Subhashree Nayak');
+  const [newReportClass, setNewReportClass] = useState('10');
+  const [newReportPeriod, setNewReportPeriod] = useState('October 15 – October 31, 2026');
+  const [newReportSubject, setNewReportSubject] = useState('All Subjects');
+  const [newReportLessons, setNewReportLessons] = useState('0');
+  const [newReportHomework, setNewReportHomework] = useState('0');
+  const [newReportQuiz, setNewReportQuiz] = useState('0');
 
   // If in Parent role, show published reports only!
   if (role === 'parent') {
@@ -174,14 +212,87 @@ export const TeacherReportsView: React.FC<TeacherReportsViewProps> = ({ role, pr
   }
 
   // Teacher Role Workflow: Create, Draft, Publish, 12 Sections
-  const handlePublishReport = (rep: StudentReport) => {
-    const updated = {
-      ...rep,
-      status: 'Published' as const,
-      publishedAt: new Date().toLocaleString()
-    };
-    setStudentReports((prev) => prev.map((r) => (r.id === rep.id ? updated : r)));
-    setSelectedReport(updated);
+  const handleCreateReport = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setReportSaveError(null);
+    setIsSavingReport(true);
+    try {
+      const token = localStorage.getItem('pathashala_token');
+      if (!token) throw new Error('Please sign in again as a teacher before creating a report.');
+      const template = INITIAL_STUDENT_REPORTS[0];
+      const classNum = Number(newReportClass);
+      const lessons = Number(newReportLessons);
+      const homework = Number(newReportHomework);
+      const quiz = Number(newReportQuiz);
+      const report: StudentReport = {
+        ...template,
+        id: `REP-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        studentId: newReportStudentId.trim(),
+        studentName: newReportStudentName.trim(),
+        classNum,
+        assignedClasses: [classNum],
+        assignedClassesInfo: [classNum],
+        subject: newReportSubject.trim(),
+        reportingPeriod: newReportPeriod.trim(),
+        frequency: reportFrequency,
+        status: 'Draft',
+        createdAt: new Date().toLocaleString(),
+        publishedAt: undefined,
+        lessonsCompleted: lessons,
+        homeworkCompletionRate: homework,
+        quizAccuracy: quiz,
+        studentDetails: {
+          ...template.studentDetails,
+          name: newReportStudentName.trim(),
+          id: newReportStudentId.trim(),
+          board: template.studentDetails.board
+        },
+        teacherComments: {
+          confidentialNote: confidentialTeacherNote,
+          releasedFeedback: releasedParentFeedback
+        }
+      };
+      const response = await fetch('/api/reports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(report)
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'The report could not be saved.');
+      const savedReport = data.report as StudentReport;
+      setStudentReports((previous) => [savedReport, ...previous]);
+      setSelectedReport(savedReport);
+      setIsCreatingReport(false);
+      setPublishSuccessNotice('New report saved as a draft. Review it and publish it to the Parent Portal when ready.');
+      setTimeout(() => setPublishSuccessNotice(null), 5000);
+    } catch (error) {
+      setReportSaveError(error instanceof Error ? error.message : 'Could not save the report. Please try again.');
+    } finally {
+      setIsSavingReport(false);
+    }
+  };
+
+  const handlePublishReport = async (rep: StudentReport) => {
+    const token = localStorage.getItem('pathashala_token');
+    if (!token) {
+      setReportSaveError('Please sign in again as a teacher before publishing.');
+      return;
+    }
+    try {
+      const response = await fetch(`/api/reports/${encodeURIComponent(rep.id)}/publish`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Could not publish this report.');
+      const updated = { ...rep, ...data.studentReport, status: 'Published' as const };
+      setStudentReports((prev) => prev.map((r) => (r.id === rep.id ? updated : r)));
+      setSelectedReport(updated);
+      if (data.parentReport) setParentReports((prev) => [data.parentReport, ...prev.filter((item) => item.id !== data.parentReport.id)]);
+    } catch (error) {
+      setReportSaveError(error instanceof Error ? error.message : 'Could not publish this report.');
+      return;
+    }
 
     // Also push to parent reports
     const parentCopy: ParentReport = {
@@ -237,6 +348,12 @@ export const TeacherReportsView: React.FC<TeacherReportsViewProps> = ({ role, pr
           <span>Prepare New Report</span>
         </button>
       </div>
+
+      {reportSaveError && (
+        <div role="alert" className="p-3.5 rounded-2xl bg-red-50 border border-red-200 text-red-800 text-xs font-bold">
+          {reportSaveError}
+        </div>
+      )}
 
       {publishSuccessNotice && (
         <div className="p-3.5 rounded-2xl bg-[#DFF3E8] border border-[#D5E9DC] text-[#004B38] text-xs font-bold flex items-center gap-2 animate-fadeIn">
@@ -487,6 +604,59 @@ export const TeacherReportsView: React.FC<TeacherReportsViewProps> = ({ role, pr
           )}
         </div>
       </div>
+
+      {isCreatingReport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#10291F]/60 p-3 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="new-report-title">
+          <form onSubmit={handleCreateReport} className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-5 sm:p-7 shadow-2xl space-y-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 id="new-report-title" className="text-xl font-black text-[#18352A]">Prepare New Student Report</h2>
+                <p className="mt-1 text-sm text-[#64776B]">Save a draft first, review it, then publish it for the linked parent.</p>
+              </div>
+              <button type="button" onClick={() => { setIsCreatingReport(false); setReportSaveError(null); }} className="rounded-xl border border-[#D5E9DC] px-3 py-2 text-sm font-bold text-[#18352A]">Close</button>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="space-y-1 text-xs font-bold text-[#18352A]">Student full name
+                <input required value={newReportStudentName} onChange={(e) => setNewReportStudentName(e.target.value)} className="w-full rounded-xl border border-[#D5E9DC] p-3 text-sm font-normal" placeholder="Student name" />
+              </label>
+              <label className="space-y-1 text-xs font-bold text-[#18352A]">Student ID (must match account)
+                <input required value={newReportStudentId} onChange={(e) => setNewReportStudentId(e.target.value)} className="w-full rounded-xl border border-[#D5E9DC] p-3 text-sm font-normal" placeholder="Student ID" />
+              </label>
+              <label className="space-y-1 text-xs font-bold text-[#18352A]">Class
+                <select value={newReportClass} onChange={(e) => setNewReportClass(e.target.value)} className="w-full rounded-xl border border-[#D5E9DC] p-3 text-sm font-normal">{Array.from({length: 12}, (_, i) => String(i + 1)).map((value) => <option key={value} value={value}>Class {value}</option>)}</select>
+              </label>
+              <label className="space-y-1 text-xs font-bold text-[#18352A]">Subject
+                <input required value={newReportSubject} onChange={(e) => setNewReportSubject(e.target.value)} className="w-full rounded-xl border border-[#D5E9DC] p-3 text-sm font-normal" />
+              </label>
+              <label className="space-y-1 text-xs font-bold text-[#18352A]">Reporting period
+                <input required value={newReportPeriod} onChange={(e) => setNewReportPeriod(e.target.value)} className="w-full rounded-xl border border-[#D5E9DC] p-3 text-sm font-normal" />
+              </label>
+              <label className="space-y-1 text-xs font-bold text-[#18352A]">Report frequency
+                <select value={reportFrequency} onChange={(e) => setReportFrequency(e.target.value as 'daily' | 'weekly' | 'monthly')} className="w-full rounded-xl border border-[#D5E9DC] p-3 text-sm font-normal"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select>
+              </label>
+              <label className="space-y-1 text-xs font-bold text-[#18352A]">Lessons completed
+                <input required type="number" min="0" value={newReportLessons} onChange={(e) => setNewReportLessons(e.target.value)} className="w-full rounded-xl border border-[#D5E9DC] p-3 text-sm font-normal" />
+              </label>
+              <label className="space-y-1 text-xs font-bold text-[#18352A]">Homework completion (%)
+                <input required type="number" min="0" max="100" value={newReportHomework} onChange={(e) => setNewReportHomework(e.target.value)} className="w-full rounded-xl border border-[#D5E9DC] p-3 text-sm font-normal" />
+              </label>
+              <label className="space-y-1 text-xs font-bold text-[#18352A]">Quiz accuracy (%)
+                <input required type="number" min="0" max="100" value={newReportQuiz} onChange={(e) => setNewReportQuiz(e.target.value)} className="w-full rounded-xl border border-[#D5E9DC] p-3 text-sm font-normal" />
+              </label>
+              <label className="space-y-1 text-xs font-bold text-[#18352A] sm:col-span-2">Private teacher note
+                <textarea value={confidentialTeacherNote} onChange={(e) => setConfidentialTeacherNote(e.target.value)} rows={3} className="w-full rounded-xl border border-[#D5E9DC] p-3 text-sm font-normal" />
+              </label>
+              <label className="space-y-1 text-xs font-bold text-[#18352A] sm:col-span-2">Feedback visible to parent
+                <textarea required value={releasedParentFeedback} onChange={(e) => setReleasedParentFeedback(e.target.value)} rows={3} className="w-full rounded-xl border border-[#D5E9DC] p-3 text-sm font-normal" />
+              </label>
+            </div>
+            <div className="flex flex-wrap justify-end gap-3 border-t border-[#D5E9DC] pt-4">
+              <button type="button" onClick={() => { setIsCreatingReport(false); setReportSaveError(null); }} className="rounded-xl border border-[#D5E9DC] px-4 py-2.5 text-sm font-bold text-[#18352A]">Cancel</button>
+              <button type="submit" disabled={isSavingReport} className="rounded-xl bg-[#006A4E] px-5 py-2.5 text-sm font-bold text-white disabled:opacity-60">{isSavingReport ? 'Saving…' : 'Save Draft Report'}</button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 };
