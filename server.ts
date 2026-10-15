@@ -585,7 +585,7 @@ app.post('/api/auth/register', (req, res) => {
     id: newId,
     name,
     email: normalizedEmail || `${name.toLowerCase().replace(/\s+/g, '')}@pathashala.edu`,
-    identifier: identifier || `BSE-2026-${Math.floor(1000 + Math.random() * 9000)}`,
+    identifier: role === 'parent' ? `PAR-2026-${Math.floor(1000 + Math.random() * 9000)}` : (identifier || `BSE-2026-${Math.floor(1000 + Math.random() * 9000)}`),
     school: school || 'Odisha Model School',
     role,
     password: hashPassword(password),
