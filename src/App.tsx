@@ -179,6 +179,28 @@ export default function App() {
     }
   }, [profile]);
 
+  // Keep the authenticated student's latest profile in the shared backend database.
+  // Teacher and parent portals read this record from the same server, not localStorage.
+  useEffect(() => {
+    if (!isAuthenticated || role !== 'student' || !currentUser?.id || profile.id !== currentUser.id) return;
+    const token = localStorage.getItem('pathashala_token');
+    if (!token) return;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => {
+      fetch('/api/student/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ profile }),
+        signal: controller.signal
+      }).then((response) => {
+        if (!response.ok) console.warn('Student profile sync failed:', response.status);
+      }).catch((error) => {
+        if (error?.name !== 'AbortError') console.warn('Student profile could not sync yet:', error);
+      });
+    }, 350);
+    return () => { window.clearTimeout(timeout); controller.abort(); };
+  }, [profile, isAuthenticated, role, currentUser?.id]);
+
   useEffect(() => {
     try {
       localStorage.setItem('pathashala_subject', activeSubject);
