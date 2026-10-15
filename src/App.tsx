@@ -222,7 +222,7 @@ export default function App() {
           subjects: [chosenSubject]
         });
       } else {
-        const firstName = user.name.trim().split(/\\s+/)[0] || user.name;
+        const firstName = user.name.trim().split(/\s+/)[0] || user.name;
         setProfile({
           id: user.id,
           name: user.name,
