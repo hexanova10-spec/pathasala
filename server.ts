@@ -331,7 +331,7 @@ const pgPool = process.env.DATABASE_URL
     })
   : null;
 
-type RelationalCollection = 'users' | 'homework' | 'submissions' | 'recordings';
+type RelationalCollection = 'users' | 'homework' | 'submissions' | 'recordings' | 'studentReports' | 'parentReports';
 
 async function upsertCollection(client: PoolClient, collection: RelationalCollection, records: any[]) {
   for (const record of records) {
@@ -351,10 +351,20 @@ async function upsertCollection(client: PoolClient, collection: RelationalCollec
         'INSERT INTO submissions (id, assignment_id, student_id, status, payload) VALUES ($1, $2, $3, $4, $5::jsonb) ON CONFLICT (id) DO UPDATE SET assignment_id = EXCLUDED.assignment_id, student_id = EXCLUDED.student_id, status = EXCLUDED.status, payload = EXCLUDED.payload, updated_at = now()',
         [record.id, record.assignmentId || '', record.studentId || '', record.status || 'Submitted', payload]
       );
-    } else {
+    } else if (collection === 'recordings') {
       await client.query(
         'INSERT INTO class_recordings (id, class_num, teacher_id, payload) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (id) DO UPDATE SET class_num = EXCLUDED.class_num, teacher_id = EXCLUDED.teacher_id, payload = EXCLUDED.payload, updated_at = now()',
         [record.id, Number(record.classNum) || 1, record.teacherId || null, payload]
+      );
+    } else if (collection === 'studentReports') {
+      await client.query(
+        'INSERT INTO student_reports (id, student_id, class_num, teacher_id, status, payload) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT (id) DO UPDATE SET student_id = EXCLUDED.student_id, class_num = EXCLUDED.class_num, teacher_id = EXCLUDED.teacher_id, status = EXCLUDED.status, payload = EXCLUDED.payload, updated_at = now()',
+        [record.id, record.studentId || '', Number(record.classNum) || 1, record.teacherId || null, record.status || 'Draft', payload]
+      );
+    } else {
+      await client.query(
+        'INSERT INTO parent_reports (id, student_id, status, payload) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (id) DO UPDATE SET student_id = EXCLUDED.student_id, status = EXCLUDED.status, payload = EXCLUDED.payload, updated_at = now()',
+        [record.id, record.studentId || '', record.status || 'Draft', payload]
       );
     }
   }
@@ -369,6 +379,8 @@ async function persistPostgresCollections() {
     await upsertCollection(client, 'homework', db.homework);
     await upsertCollection(client, 'submissions', db.submissions);
     await upsertCollection(client, 'recordings', db.recordings);
+    await upsertCollection(client, 'studentReports', db.studentReports);
+    await upsertCollection(client, 'parentReports', db.parentReports);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
@@ -380,16 +392,20 @@ async function persistPostgresCollections() {
 
 async function loadPostgresCollections() {
   if (!pgPool) return;
-  const [users, homework, submissions, recordings] = await Promise.all([
+  const [users, homework, submissions, recordings, studentReports, parentReports] = await Promise.all([
     pgPool.query('SELECT payload FROM users ORDER BY created_at ASC'),
     pgPool.query('SELECT payload FROM homework ORDER BY created_at ASC'),
     pgPool.query('SELECT payload FROM submissions ORDER BY created_at ASC'),
-    pgPool.query('SELECT payload FROM class_recordings ORDER BY created_at ASC')
+    pgPool.query('SELECT payload FROM class_recordings ORDER BY created_at ASC'),
+    pgPool.query('SELECT payload FROM student_reports ORDER BY created_at ASC'),
+    pgPool.query('SELECT payload FROM parent_reports ORDER BY created_at ASC')
   ]);
   db.users = users.rows.map((row) => row.payload);
   db.homework = homework.rows.map((row) => row.payload);
   db.submissions = submissions.rows.map((row) => row.payload);
   db.recordings = recordings.rows.map((row) => row.payload);
+  db.studentReports = studentReports.rows.map((row) => row.payload);
+  db.parentReports = parentReports.rows.map((row) => row.payload);
 }
 
 async function initializePostgresStore() {
@@ -406,13 +422,17 @@ async function initializePostgresStore() {
       users: Number((await client.query('SELECT count(*)::int AS count FROM users')).rows[0].count),
       homework: Number((await client.query('SELECT count(*)::int AS count FROM homework')).rows[0].count),
       submissions: Number((await client.query('SELECT count(*)::int AS count FROM submissions')).rows[0].count),
-      recordings: Number((await client.query('SELECT count(*)::int AS count FROM class_recordings')).rows[0].count)
+      recordings: Number((await client.query('SELECT count(*)::int AS count FROM class_recordings')).rows[0].count),
+      studentReports: Number((await client.query('SELECT count(*)::int AS count FROM student_reports')).rows[0].count),
+      parentReports: Number((await client.query('SELECT count(*)::int AS count FROM parent_reports')).rows[0].count)
     };
     // Seed each table independently, and never overwrite a non-empty Neon table.
     if (tableCounts.users === 0) await upsertCollection(client, 'users', db.users);
     if (tableCounts.homework === 0) await upsertCollection(client, 'homework', db.homework);
     if (tableCounts.submissions === 0) await upsertCollection(client, 'submissions', db.submissions);
     if (tableCounts.recordings === 0) await upsertCollection(client, 'recordings', db.recordings);
+    if (tableCounts.studentReports === 0) await upsertCollection(client, 'studentReports', db.studentReports);
+    if (tableCounts.parentReports === 0) await upsertCollection(client, 'parentReports', db.parentReports);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
@@ -796,7 +816,8 @@ app.post('/api/recordings', (req, res) => {
 // ==========================================
 
 app.get('/api/homework', (req, res) => {
-  const user = (req as any).authUser;
+  const user = getAuthenticatedUser(req);
+  if (!user) return res.status(401).json({ error: 'Please sign in to view homework.' });
   const requestedClass = req.query.classNum ? Number(req.query.classNum) : undefined;
   let items = db.homework;
   if (user.role === 'student') {
@@ -825,7 +846,10 @@ app.get('/api/homework', (req, res) => {
 });
 
 app.post('/api/homework', (req, res) => {
-  const { title, classNum, subject, instructions, dueDate, maxMarks, teacherName } = req.body;
+  const user = getAuthenticatedUser(req);
+  if (!user) return res.status(401).json({ error: 'Please sign in to create homework.' });
+  if (user.role !== 'teacher') return res.status(403).json({ error: 'Only teachers can create homework.' });
+  const { title, classNum, subject, instructions, dueDate, maxMarks } = req.body || {};
   if (!title || !classNum || !subject) {
     return res.status(400).json({ error: 'Title, class, and subject are required.' });
   }
@@ -835,8 +859,8 @@ app.post('/api/homework', (req, res) => {
     title,
     classNum: Number(classNum),
     subject,
-    teacherId: 'TCH-504',
-    teacherName: teacherName || 'Smt. Priya Sharma',
+    teacherId: user.id,
+    teacherName: user.name || 'Teacher',
     instructions: instructions || 'Complete the exercises and submit before deadline.',
     issueDate: new Date().toISOString().split('T')[0],
     dueDate: dueDate || new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],

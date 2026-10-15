@@ -59,3 +59,29 @@ CREATE TABLE IF NOT EXISTS class_recordings (
 
 CREATE INDEX IF NOT EXISTS class_recordings_class_idx ON class_recordings (class_num);
 CREATE INDEX IF NOT EXISTS class_recordings_teacher_idx ON class_recordings (teacher_id);
+
+
+CREATE TABLE IF NOT EXISTS student_reports (
+  id TEXT PRIMARY KEY,
+  student_id TEXT NOT NULL,
+  class_num INTEGER NOT NULL CHECK (class_num BETWEEN 1 AND 12),
+  teacher_id TEXT,
+  status TEXT NOT NULL DEFAULT 'Draft',
+  payload JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS student_reports_student_idx ON student_reports (student_id);
+CREATE INDEX IF NOT EXISTS student_reports_teacher_class_idx ON student_reports (teacher_id, class_num);
+
+CREATE TABLE IF NOT EXISTS parent_reports (
+  id TEXT PRIMARY KEY,
+  student_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'Draft',
+  payload JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS parent_reports_student_status_idx ON parent_reports (student_id, status);
