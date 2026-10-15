@@ -1011,7 +1011,8 @@ app.post('/api/notifications/:id/read', (req, res) => {
 // ==========================================
 
 app.get('/api/reports', (req, res) => {
-  const user = (req as any).authUser;
+  const user = getAuthenticatedUser(req);
+  if (!user) return res.status(401).json({ error: 'Please sign in to view reports.' });
   if (user.role === 'parent') {
     const linkedIds = Array.isArray(user.linkedStudentIds) ? user.linkedStudentIds : [];
     return res.json({
@@ -1020,7 +1021,7 @@ app.get('/api/reports', (req, res) => {
     });
   }
   if (user.role === 'teacher') {
-    const classes = Array.isArray(user.teachingClasses) ? user.teachingClasses : [];
+    const classes = Array.isArray(user.teachingClasses) ? user.teachingClasses.map(Number) : [];
     return res.json({
       studentReports: db.studentReports.filter((report) => report.teacherId === user.id || classes.includes(Number(report.classNum))),
       parentReports: []
@@ -1030,27 +1031,67 @@ app.get('/api/reports', (req, res) => {
 });
 
 app.post('/api/reports', (req, res) => {
-  const reportData = req.body;
-  const newReport = {
+  const user = getAuthenticatedUser(req);
+  if (!user) return res.status(401).json({ error: 'Please sign in to create a report.' });
+  if (user.role !== 'teacher') return res.status(403).json({ error: 'Only teachers can create student reports.' });
+  const reportData = req.body || {};
+  const classNum = Number(reportData.classNum);
+  if (typeof reportData.studentName !== 'string' || !reportData.studentName.trim() ||
+      typeof reportData.studentId !== 'string' || !reportData.studentId.trim() ||
+      !Number.isInteger(classNum) || classNum < 1 || classNum > 12 ||
+      typeof reportData.reportingPeriod !== 'string' || !reportData.reportingPeriod.trim()) {
+    return res.status(400).json({ error: 'Student name, student ID, valid class, and reporting period are required.' });
+  }
+  const teacherClasses = Array.isArray(user.teachingClasses) ? user.teachingClasses.map(Number) : [];
+  if (teacherClasses.length && !teacherClasses.includes(classNum)) {
+    return res.status(403).json({ error: 'You can create reports only for your assigned classes.' });
+  }
+  const student = db.users.find((item) => item.role === 'student' &&
+    [item.id, item.identifier, item.email].some((value) => typeof value === 'string' && value.toLowerCase() === reportData.studentId.trim().toLowerCase()));
+  if (!student) return res.status(404).json({ error: 'No registered student matches that Student ID. Use the ID from the student account.' });
+  if (Array.isArray(student.assignedClasses) && student.assignedClasses.length &&
+      !student.assignedClasses.map(Number).includes(classNum)) {
+    return res.status(400).json({ error: 'The selected class does not match this student’s assigned classes.' });
+  }
+  const template = db.studentReports.find((item) => item.studentId === student.id) || {};
+  const safeReport = {
+    ...template,
     ...reportData,
-    id: reportData.id || `REP-${Date.now().toString().slice(-4)}`,
+    id: `REP-${Date.now()}-${randomBytes(3).toString('hex')}`,
+    studentId: student.id,
+    studentName: student.name,
+    classNum,
+    assignedClasses: [classNum],
+    assignedClassesInfo: [classNum],
+    studentDetails: {
+      ...(template.studentDetails || {}),
+      ...(reportData.studentDetails || {}),
+      name: student.name,
+      id: student.identifier || student.id,
+      school: student.school || '',
+      board: (reportData.studentDetails && reportData.studentDetails.board) || (template.studentDetails && template.studentDetails.board) || 'School Board'
+    },
+    teacherId: user.id,
+    teacherName: user.name || 'Teacher',
     createdAt: new Date().toLocaleString(),
-    status: reportData.status || 'Draft'
+    publishedAt: undefined,
+    status: 'Draft'
   };
-
-  db.studentReports.unshift(newReport);
-  return res.json({ success: true, report: newReport });
+  db.studentReports.unshift(safeReport);
+  return res.status(201).json({ success: true, report: safeReport });
 });
 
 app.post('/api/reports/:id/publish', (req, res) => {
+  const user = getAuthenticatedUser(req);
+  if (!user) return res.status(401).json({ error: 'Please sign in to publish reports.' });
+  if (user.role !== 'teacher') return res.status(403).json({ error: 'Only teachers can publish student reports.' });
   const { id } = req.params;
-  const report = db.studentReports.find((r) => r.id === id);
-  if (!report) return res.status(404).json({ error: 'Report not found' });
+  const report = db.studentReports.find((r) => r.id === id && (r.teacherId === user.id || (Array.isArray(user.teachingClasses) && user.teachingClasses.map(Number).includes(Number(r.classNum)))));
+  if (!report) return res.status(404).json({ error: 'Report not found in your assigned classes.' });
 
   report.status = 'Published';
   report.publishedAt = new Date().toLocaleString();
 
-  // Create linked parent report
   const parentRep = {
     id: `PREP-${id}`,
     studentReportId: report.id,
@@ -1073,9 +1114,7 @@ app.post('/api/reports/:id/publish', (req, res) => {
     recommendedRevision: report.recommendedNextSteps,
     status: 'Published'
   };
-
   db.parentReports.unshift(parentRep);
-
   return res.json({ success: true, studentReport: report, parentReport: parentRep });
 });
 
