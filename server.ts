@@ -1152,6 +1152,94 @@ async function generateWithGeminiFallback(request: { contents: any; config?: any
   throw lastError || new Error('All configured Gemini models are temporarily unavailable.');
 }
 
+// AI Study Studio generation endpoint used by the Student Portal.
+app.post('/api/gemini/study-studio', async (req, res) => {
+  const {
+    type = 'short_notes',
+    topic,
+    classNum = 10,
+    subject = 'Science',
+    language = 'English'
+  } = req.body || {};
+
+  const allowedTypes = new Set(['short_notes', 'summary', 'flashcards', 'formulas', 'mindmap', 'vocab']);
+  const numericClass = Number(classNum);
+  const cleanTopic = typeof topic === 'string' ? topic.trim().slice(0, 2000) : '';
+  const cleanSubject = typeof subject === 'string' ? subject.trim().slice(0, 80) : 'Science';
+  const cleanLanguage = typeof language === 'string' ? language.trim().slice(0, 40) : 'English';
+
+  if (!allowedTypes.has(type)) {
+    return res.status(400).json({ error: 'Choose a supported Study Studio material format.' });
+  }
+  if (!cleanTopic) {
+    return res.status(400).json({ error: 'Enter a chapter or topic before generating study material.' });
+  }
+  if (!Number.isInteger(numericClass) || numericClass < 1 || numericClass > 12) {
+    return res.status(400).json({ error: 'Class must be a number from 1 to 12.' });
+  }
+  if (!aiClient) {
+    return res.status(503).json({
+      error: 'Live AI is not connected. Add a valid GEMINI_API_KEY to the backend environment and redeploy. No study material was generated.',
+      isDemo: true
+    });
+  }
+
+  const formatInstructions: Record<string, string> = {
+    short_notes: 'Create clear, concise revision notes with headings, definitions, key points, and examples.',
+    summary: 'Write a structured chapter summary with the main ideas, important terms, and a short recap.',
+    flashcards: 'Create 8 study flashcards. For each, show Question: and Answer: on separate lines.',
+    formulas: 'Create a formula sheet. For each formula, explain symbols, SI units where relevant, and one short example.',
+    mindmap: 'Create a readable text mind map. Put the central topic first, then organize branches and sub-branches using indentation and arrows. Preserve and logically organize the student-provided ideas included in the topic.',
+    vocab: 'Create a vocabulary list with key terms, simple definitions, and one example for each.'
+  };
+
+  try {
+    const systemInstruction = buildSystemInstruction(
+      numericClass,
+      cleanSubject,
+      'Odisha State Board (BSE/CHSE) / CBSE',
+      cleanLanguage,
+      'English',
+      type === 'short_notes' ? 'save_notes' : undefined
+    );
+    const prompt = `${systemInstruction}
+
+Study Studio format: ${type}
+Formatting instructions: ${formatInstructions[type]}
+
+Generate original, accurate school-level learning material for this topic:
+${cleanTopic}
+
+Requirements:
+- Use the requested language: ${cleanLanguage}.
+- Match Class ${numericClass} and subject ${cleanSubject}.
+- Keep the output organized and useful for revision.
+- Do not claim the content came from an official textbook unless a source was provided.
+- Return only the study material, without an introduction about being an AI.`;
+
+    const { response, model: usedModel } = await generateWithGeminiFallback({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      config: { temperature: 0.35, maxOutputTokens: 4096 }
+    });
+    const generatedText = response.text;
+    if (typeof generatedText !== 'string' || !generatedText.trim()) {
+      return res.status(502).json({ error: 'Gemini returned an empty response. Please try again.' });
+    }
+    return res.json({ content: generatedText.trim(), source: usedModel, isDemo: false });
+  } catch (error: any) {
+    const message = String(error?.message || error?.error?.message || 'Unknown Gemini generation error').slice(0, 400);
+    console.error('Study Studio Gemini generation failed:', message);
+    const status = Number(error?.status || error?.code || error?.error?.code);
+    return res.status(status === 429 ? 429 : 502).json({
+      error: status === 429
+        ? 'Gemini rate limit or quota reached. Please wait and try again.'
+        : 'Gemini could not generate Study Studio material. Check the backend logs and Gemini API key, then try again.',
+      detail: process.env.NODE_ENV === 'production' ? undefined : message,
+      isDemo: false
+    });
+  }
+});
+
 // AI Tutor chat endpoint
 app.post('/api/gemini/tutor', async (req, res) => {
   const {
