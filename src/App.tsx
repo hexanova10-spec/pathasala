@@ -202,14 +202,52 @@ export default function App() {
   const handleAuthSuccess = (user: User, newRole: UserRole) => {
     setCurrentUser(user);
     if (newRole === 'student') {
-      const chosenSubject = user.preferredSubject || localStorage.getItem('pathashala_subject') || 'Mathematics';
+      const chosenSubject = user.preferredSubject || 'Mathematics';
+      const registeredLanguage = user.preferredLanguage || 'English';
+      const assignedClasses = (user.assignedClasses || [10]).filter((value) => Number.isInteger(value) && value >= 1 && value <= 12).slice(0, 2);
+      const safeClasses = assignedClasses.length ? assignedClasses : [10];
       setActiveSubject(chosenSubject);
       localStorage.setItem('pathashala_subject', chosenSubject);
-      if (user.preferredLanguage) {
-        localStorage.setItem('pathashala_language', user.preferredLanguage);
-        setProfile((prev) => ({ ...prev, interfaceLanguage: user.preferredLanguage!, tutorLanguage: user.preferredLanguage!, textbookLanguage: user.preferredLanguage!, subjects: [chosenSubject] }));
+      localStorage.setItem('pathashala_language', registeredLanguage);
+      localStorage.setItem('pathashala_user', JSON.stringify(user));
+
+      // Keep the seeded demo learner's rich sample dashboard, but build every
+      // newly registered student's profile from that student's own account data.
+      if (user.id === INITIAL_STUDENT_PROFILE.id) {
+        setProfile({
+          ...INITIAL_STUDENT_PROFILE,
+          tutorLanguage: registeredLanguage,
+          interfaceLanguage: registeredLanguage,
+          textbookLanguage: registeredLanguage,
+          subjects: [chosenSubject]
+        });
       } else {
-        setProfile((prev) => ({ ...prev, subjects: [chosenSubject] }));
+        const firstName = user.name.trim().split(/\\s+/)[0] || user.name;
+        setProfile({
+          id: user.id,
+          name: user.name,
+          nickname: firstName,
+          studentId: user.identifier || user.id,
+          email: user.email,
+          assignedClasses: safeClasses,
+          classNum: safeClasses[0],
+          schoolBoard: 'Odisha State Board (BSE/CHSE)',
+          schoolName: user.school || 'School not provided',
+          interfaceLanguage: registeredLanguage,
+          tutorLanguage: registeredLanguage,
+          textbookLanguage: registeredLanguage,
+          subjects: [chosenSubject],
+          learningGoals: [],
+          accessibility: {
+            fontSize: 'normal',
+            highContrast: false,
+            speechSpeed: 1.0,
+            dyslexiaFont: false
+          },
+          parentLinked: false,
+          parentName: undefined,
+          parentEmail: undefined
+        });
       }
     }
     setIsAuthenticated(true);
