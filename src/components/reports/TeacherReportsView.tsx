@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { UserRole, StudentReport, ParentReport, StudentProfile } from '../../types';
 import { INITIAL_STUDENT_REPORTS, INITIAL_PARENT_REPORTS } from '../../data/mockStore';
 import {
@@ -30,6 +30,8 @@ export const TeacherReportsView: React.FC<TeacherReportsViewProps> = ({ role, pr
     INITIAL_STUDENT_REPORTS
   );
   const [reportSaveError, setReportSaveError] = useState<string | null>(null);
+  const [registeredStudents, setRegisteredStudents] = useState<any[]>([]);
+  const [studentRosterError, setStudentRosterError] = useState<string | null>(null);
   const [isSavingReport, setIsSavingReport] = useState(false);
   const [parentReports, setParentReports] = useState<ParentReport[]>(
     INITIAL_PARENT_REPORTS
@@ -44,29 +46,43 @@ export const TeacherReportsView: React.FC<TeacherReportsViewProps> = ({ role, pr
 
   useEffect(() => {
     let cancelled = false;
+    const token = localStorage.getItem('pathashala_token');
+    if (!token) return () => { cancelled = true; };
     const loadReports = async () => {
-      const token = localStorage.getItem('pathashala_token');
-      if (!token) return;
       try {
         const response = await fetch('/api/reports', { headers: { Authorization: `Bearer ${token}` } });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Could not load reports.');
         if (cancelled) return;
-        if (role === 'teacher' && Array.isArray(data.studentReports) && data.studentReports.length) {
+        if (role === 'teacher' && Array.isArray(data.studentReports)) {
           setStudentReports((current) => {
             const serverReports = data.studentReports as StudentReport[];
             const serverIds = new Set(serverReports.map((item) => item.id));
             return [...serverReports, ...current.filter((item) => !serverIds.has(item.id))];
           });
         }
-        if (role === 'parent' && Array.isArray(data.parentReports)) {
-          setParentReports(data.parentReports as ParentReport[]);
-        }
+        if (role === 'parent' && Array.isArray(data.parentReports)) setParentReports(data.parentReports as ParentReport[]);
       } catch (error) {
         if (!cancelled) console.warn('Reports could not be refreshed from the server:', error);
       }
     };
+    const loadStudents = async () => {
+      if (role !== 'teacher') return;
+      try {
+        const response = await fetch('/api/teacher/students', { headers: { Authorization: `Bearer ${token}` } });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not load your students.');
+        if (!cancelled) {
+          const students = Array.isArray(data.students) ? data.students : [];
+          setRegisteredStudents(students);
+          setStudentRosterError(students.length ? null : 'No registered students were found in your assigned classes.');
+        }
+      } catch (error) {
+        if (!cancelled) setStudentRosterError(error instanceof Error ? error.message : 'Could not load students.');
+      }
+    };
     void loadReports();
+    void loadStudents();
     return () => { cancelled = true; };
   }, [role]);
 
@@ -82,8 +98,8 @@ export const TeacherReportsView: React.FC<TeacherReportsViewProps> = ({ role, pr
   const [releasedParentFeedback, setReleasedParentFeedback] = useState(
     'Subhashree is making admirable progress in Class 10. She uses her regional Odia explanations alongside English technical terms very effectively. Please encourage her to take short breaks during evening sessions.'
   );
-  const [newReportStudentId, setNewReportStudentId] = useState('BSE-2026-OD-8819');
-  const [newReportStudentName, setNewReportStudentName] = useState('Subhashree Nayak');
+  const [newReportStudentId, setNewReportStudentId] = useState('');
+  const [newReportStudentName, setNewReportStudentName] = useState('');
   const [newReportClass, setNewReportClass] = useState('10');
   const [newReportPeriod, setNewReportPeriod] = useState('October 15 – October 31, 2026');
   const [newReportSubject, setNewReportSubject] = useState('All Subjects');
@@ -616,11 +632,27 @@ export const TeacherReportsView: React.FC<TeacherReportsViewProps> = ({ role, pr
               <button type="button" onClick={() => { setIsCreatingReport(false); setReportSaveError(null); }} className="rounded-xl border border-[#D5E9DC] px-3 py-2 text-sm font-bold text-[#18352A]">Close</button>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
-              <label className="space-y-1 text-xs font-bold text-[#18352A]">Student full name
-                <input required value={newReportStudentName} onChange={(e) => setNewReportStudentName(e.target.value)} className="w-full rounded-xl border border-[#D5E9DC] p-3 text-sm font-normal" placeholder="Student name" />
+              <label className="space-y-1 text-xs font-bold text-[#18352A] sm:col-span-2">Select registered student
+                <select required value={newReportStudentId} onChange={(e) => {
+                  const student = registeredStudents.find((item) => String(item.identifier || item.studentId || item.id) === e.target.value);
+                  setNewReportStudentId(e.target.value);
+                  setNewReportStudentName(student?.name || '');
+                  if (student?.assignedClasses?.length) setNewReportClass(String(student.assignedClasses[0]));
+                }} className="w-full rounded-xl border border-[#D5E9DC] p-3 text-sm font-normal">
+                  <option value="">Choose a student from your class roster</option>
+                  {registeredStudents.map((student) => {
+                    const studentKey = String(student.identifier || student.studentId || student.id);
+                    return <option key={student.id || studentKey} value={studentKey}>{student.name} — {studentKey} (Class {student.classNum || student.assignedClasses?.[0] || 10})</option>;
+                  })}
+                </select>
+                {studentRosterError && <span className="block font-normal text-amber-700">{studentRosterError}</span>}
+                <span className="block font-normal text-[#64776B]">Only registered students assigned to your classes can be selected.</span>
               </label>
-              <label className="space-y-1 text-xs font-bold text-[#18352A]">Student ID (must match account)
-                <input required value={newReportStudentId} onChange={(e) => setNewReportStudentId(e.target.value)} className="w-full rounded-xl border border-[#D5E9DC] p-3 text-sm font-normal" placeholder="Student ID" />
+              <label className="space-y-1 text-xs font-bold text-[#18352A]">Student full name
+                <input required readOnly value={newReportStudentName} className="w-full rounded-xl border border-[#D5E9DC] bg-gray-50 p-3 text-sm font-normal" placeholder="Select a student above" />
+              </label>
+              <label className="space-y-1 text-xs font-bold text-[#18352A]">Student ID
+                <input required readOnly value={newReportStudentId} className="w-full rounded-xl border border-[#D5E9DC] bg-gray-50 p-3 text-sm font-normal" placeholder="Select a student above" />
               </label>
               <label className="space-y-1 text-xs font-bold text-[#18352A]">Class
                 <select value={newReportClass} onChange={(e) => setNewReportClass(e.target.value)} className="w-full rounded-xl border border-[#D5E9DC] p-3 text-sm font-normal">{Array.from({length: 12}, (_, i) => String(i + 1)).map((value) => <option key={value} value={value}>Class {value}</option>)}</select>
