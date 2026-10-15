@@ -1241,6 +1241,96 @@ Requirements:
   }
 });
 
+// Generate fresh, student-specific practice questions for the Practice Zone.
+app.post('/api/gemini/practice-questions', async (req, res) => {
+  const { classNum = 10, subject = 'Mathematics', language = 'English', mode = 'adaptive', difficulty = 'All', recentMistakes = [], refreshSeed = '' } = req.body || {};
+  const numericClass = Number(classNum);
+  const cleanSubject = typeof subject === 'string' ? subject.trim().slice(0, 100) : 'Mathematics';
+  const cleanLanguage = typeof language === 'string' ? language.trim().slice(0, 40) : 'English';
+  const cleanMode = ['adaptive', 'board_prep', 'daily_challenge'].includes(mode) ? mode : 'adaptive';
+  const cleanDifficulty = ['All', 'Beginner', 'Easy', 'Medium', 'Advanced'].includes(difficulty) ? difficulty : 'All';
+  const mistakeTopics = Array.isArray(recentMistakes)
+    ? recentMistakes.slice(-8).map((item: any) => String(item?.concept || item?.question || '').slice(0, 180)).filter(Boolean)
+    : [];
+
+  if (!Number.isInteger(numericClass) || numericClass < 1 || numericClass > 12) {
+    return res.status(400).json({ error: 'Class must be a number from 1 to 12.' });
+  }
+  if (!cleanSubject) return res.status(400).json({ error: 'Choose a subject to generate practice questions.' });
+  if (!aiClient) {
+    return res.status(503).json({ error: 'Live practice generation is not configured. Add GEMINI_API_KEY to the backend environment and redeploy.' });
+  }
+
+  const modeInstructions: Record<string, string> = {
+    adaptive: 'Mix conceptual understanding and application questions. If recent mistakes are provided, focus extra questions on those weak concepts while still covering the chapter.',
+    board_prep: 'Create board-exam-style questions with precise wording, realistic numericals where suitable, and exam-appropriate difficulty.',
+    daily_challenge: 'Create varied, engaging challenge questions that test reasoning and application, not only memorization.'
+  };
+
+  try {
+    const prompt = `Create exactly 8 NEW multiple-choice practice questions for an Indian school student.
+Class: ${numericClass}
+Subject: ${cleanSubject}
+Language: ${cleanLanguage}
+Practice mode: ${cleanMode} — ${modeInstructions[cleanMode]}
+Requested difficulty: ${cleanDifficulty === 'All' ? 'mix Beginner, Easy, Medium, and Advanced appropriately for this class' : cleanDifficulty}
+Student's recent incorrect answers / weak concepts: ${mistakeTopics.length ? mistakeTopics.join('; ') : 'No mistake history yet; cover a varied set of core concepts for this class and subject.'}
+Fresh-set variation key: ${String(refreshSeed).slice(0, 80)}
+
+Requirements:
+- Questions must match Class ${numericClass} and subject ${cleanSubject}, and must be different from generic unrelated subjects.
+- Make this set distinct from previous sets; vary the concepts, wording, examples, and numbers each time.
+- Use ${cleanLanguage} for question, options, and explanation where possible; keep standard scientific terms and formulas readable.
+- Include exactly four answer options per question and exactly one correct answer.
+- Keep age-appropriate, accurate, curriculum-aligned questions. Do not invent official board questions.
+- Return ONLY valid JSON with this shape:
+{"questions":[{"id":"unique-string","question":"...","options":["...","...","...","..."],"correctIndex":0,"explanation":"...","concept":"...","difficulty":"Easy","classNum":${numericClass},"subject":"${cleanSubject}"}]}
+- correctIndex must be 0, 1, 2, or 3. difficulty must be Beginner, Easy, Medium, or Advanced. No markdown fences or extra text.`;
+
+    const { response, model: usedModel } = await generateWithGeminiFallback({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      config: { temperature: 0.85, maxOutputTokens: 5000, responseMimeType: 'application/json' }
+    });
+    const raw = response.text;
+    if (typeof raw !== 'string' || !raw.trim()) return res.status(502).json({ error: 'AI returned an empty practice set. Please try again.' });
+    let parsed: any;
+    try {
+      parsed = JSON.parse(raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''));
+    } catch {
+      return res.status(502).json({ error: 'AI returned invalid question data. Please generate a new set.' });
+    }
+    const rawQuestions = Array.isArray(parsed) ? parsed : parsed.questions;
+    const questions = (Array.isArray(rawQuestions) ? rawQuestions : []).filter((q: any) =>
+      q && typeof q.question === 'string' && q.question.trim() &&
+      Array.isArray(q.options) && q.options.length === 4 && q.options.every((o: any) => typeof o === 'string') &&
+      Number.isInteger(q.correctIndex) && q.correctIndex >= 0 && q.correctIndex <= 3 &&
+      typeof q.explanation === 'string' && typeof q.concept === 'string' &&
+      ['Beginner', 'Easy', 'Medium', 'Advanced'].includes(q.difficulty)
+    ).slice(0, 8).map((q: any, index: number) => ({
+      id: `ai-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
+      question: q.question.trim(),
+      options: q.options,
+      correctIndex: q.correctIndex,
+      explanation: q.explanation,
+      concept: q.concept,
+      difficulty: q.difficulty,
+      classNum: numericClass,
+      subject: cleanSubject,
+      board: 'Personalized AI Practice'
+    }));
+    if (questions.length < 4) return res.status(502).json({ error: 'AI generated too few valid questions. Please try a fresh set.' });
+    return res.json({ questions, source: usedModel, isDemo: false });
+  } catch (error: any) {
+    const message = String(error?.message || error?.error?.message || 'Unknown Gemini generation error').slice(0, 300);
+    console.error('Practice question generation failed:', message);
+    const status = Number(error?.status || error?.code || error?.error?.code);
+    return res.status(status === 429 ? 429 : 502).json({
+      error: status === 429 ? 'AI practice quota reached. Wait a moment and try again.' : 'AI could not generate practice questions. Check backend logs and Gemini configuration.',
+      detail: process.env.NODE_ENV === 'production' ? undefined : message
+    });
+  }
+});
+
 // AI Tutor chat endpoint
 app.post('/api/gemini/tutor', async (req, res) => {
   const {

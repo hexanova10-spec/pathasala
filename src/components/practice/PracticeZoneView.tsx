@@ -30,6 +30,8 @@ export const PracticeZoneView: React.FC<PracticeZoneViewProps> = ({
   const [practiceMode, setPracticeMode] = useState<'adaptive' | 'board_prep' | 'daily_challenge'>('adaptive');
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [questionOrder, setQuestionOrder] = useState<QuizQuestion[]>(() => shuffleQuestions(SAMPLE_QUIZZES));
+  const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
+  const [questionGenerationMessage, setQuestionGenerationMessage] = useState('');
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [isAnswerSubmitted, setIsAnswerSubmitted] = useState(false);
   const [score, setScore] = useState(0);
@@ -43,12 +45,50 @@ export const PracticeZoneView: React.FC<PracticeZoneViewProps> = ({
 
   const activeQuestion = filteredQuestions[currentQuestionIndex] || questionOrder[0] || SAMPLE_QUIZZES[0];
 
-  useEffect(() => {
-    setQuestionOrder(shuffleQuestions(SAMPLE_QUIZZES));
+  const generateFreshQuestions = async () => {
+    setIsGeneratingQuestions(true);
+    setQuestionGenerationMessage('');
     setCurrentQuestionIndex(0);
     setSelectedOption(null);
     setIsAnswerSubmitted(false);
-  }, [activeSubject, profile.classNum, practiceMode]);
+    setScore(0);
+    setMistakesList([]);
+    try {
+      const response = await fetch('/api/gemini/practice-questions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          classNum: profile.classNum,
+          subject: activeSubject,
+          language: profile.tutorLanguage || profile.interfaceLanguage || 'English',
+          mode: practiceMode,
+          difficulty: selectedDifficulty,
+          recentMistakes: mistakesList,
+          refreshSeed: `${Date.now()}-${Math.random().toString(36).slice(2)}`
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !Array.isArray(data.questions) || data.questions.length === 0) {
+        throw new Error(data.error || 'Personalized AI questions are unavailable right now.');
+      }
+      setQuestionOrder(shuffleQuestions(data.questions as QuizQuestion[]));
+      setQuestionGenerationMessage('Fresh questions generated for your class, subject, and practice history.');
+    } catch (error: any) {
+      const matchingSamples = SAMPLE_QUIZZES.filter((q) =>
+        q.classNum === profile.classNum && q.subject.toLowerCase().includes(activeSubject.toLowerCase().split(' ')[0])
+      );
+      setQuestionOrder(shuffleQuestions(matchingSamples.length ? matchingSamples : SAMPLE_QUIZZES));
+      setQuestionGenerationMessage(`Live AI question generation is unavailable. Showing shuffled sample questions instead. ${error?.message || ''}`);
+    } finally {
+      setIsGeneratingQuestions(false);
+    }
+  };
+
+  useEffect(() => {
+    void generateFreshQuestions();
+    // Question generation intentionally resets when class, subject, mode, or difficulty changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSubject, profile.classNum, practiceMode, selectedDifficulty]);
 
   const handleSelectOption = (index: number) => {
     if (isAnswerSubmitted) return;
@@ -97,8 +137,7 @@ export const PracticeZoneView: React.FC<PracticeZoneViewProps> = ({
     if (currentQuestionIndex < filteredQuestions.length - 1) {
       setCurrentQuestionIndex((prev) => prev + 1);
     } else {
-      setQuestionOrder(shuffleQuestions(SAMPLE_QUIZZES));
-      setCurrentQuestionIndex(0);
+      void generateFreshQuestions();
     }
   };
 
@@ -195,6 +234,20 @@ export const PracticeZoneView: React.FC<PracticeZoneViewProps> = ({
         </div>
       </div>
 
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/70 px-4 py-3">
+        <div className="text-xs text-indigo-900" role="status">
+          {isGeneratingQuestions ? 'Creating a fresh question set for your learning...' : questionGenerationMessage}
+        </div>
+        <button
+          type="button"
+          onClick={() => void generateFreshQuestions()}
+          disabled={isGeneratingQuestions}
+          className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold transition"
+        >
+          {isGeneratingQuestions ? 'Generating…' : 'Generate New Questions'}
+        </button>
+      </div>
+
       {/* Active Question Card */}
       <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-sm space-y-6">
         <div className="flex items-center justify-between text-xs border-b border-slate-100 pb-3">
@@ -212,7 +265,7 @@ export const PracticeZoneView: React.FC<PracticeZoneViewProps> = ({
         </div>
 
         <h2 className="text-base sm:text-lg font-bold text-slate-800 leading-relaxed">
-          {activeQuestion.question}
+          {isGeneratingQuestions ? 'Generating personalized questions for your class and subject…' : activeQuestion.question}
         </h2>
 
         {/* Options Grid */}
@@ -312,7 +365,7 @@ export const PracticeZoneView: React.FC<PracticeZoneViewProps> = ({
           {!isAnswerSubmitted ? (
             <button
               onClick={handleSubmitAnswer}
-              disabled={selectedOption === null}
+              disabled={isGeneratingQuestions || selectedOption === null}
               className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-bold text-xs sm:text-sm transition shadow-md shadow-indigo-600/20"
             >
               Check Answer
