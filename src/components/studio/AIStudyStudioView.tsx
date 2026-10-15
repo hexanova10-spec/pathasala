@@ -81,17 +81,22 @@ export const AIStudyStudioView: React.FC<AIStudyStudioViewProps> = ({ profile, a
   };
 
   const handleSaveToOfflineNotes = async () => {
-    if (!generatedContent) return;
-    await offlineStorage.saveNote({
-      id: 'studio-note-' + Date.now(),
-      title: `${contentType.toUpperCase()}: ${topic}`,
-      topic,
-      content: generatedContent,
-      subject: activeSubject,
-      classNum: profile.classNum,
-      createdAt: new Date().toISOString()
-    });
-    alert('Material saved to your Offline Library! Accessible anytime without internet.');
+    if (!generatedContent || generatedContent.startsWith('LIVE AI ERROR:')) return;
+    try {
+      await offlineStorage.saveNote({
+        id: `studio-note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        title: `${contentType.toUpperCase()}: ${topic}`,
+        topic,
+        content: generatedContent,
+        subject: activeSubject,
+        classNum: Number(profile.classNum),
+        createdAt: new Date().toISOString()
+      });
+      alert('Saved successfully! Open Offline Learning Centre → Saved Study Materials to read it without internet on this device.');
+    } catch (error) {
+      console.error('Could not save study material offline:', error);
+      alert(`Could not save offline: ${error instanceof Error ? error.message : 'Browser storage is unavailable. Please allow site storage and try again.'}`);
+    }
   };
 
   return (
@@ -321,7 +326,8 @@ export const AIStudyStudioView: React.FC<AIStudyStudioViewProps> = ({ profile, a
 
             <button
               onClick={handleSaveToOfflineNotes}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold transition"
+              disabled={generatedContent.startsWith('LIVE AI ERROR:')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Bookmark className="w-3.5 h-3.5" />
               Save to Offline Notes

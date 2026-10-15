@@ -186,6 +186,17 @@ class OfflineStorageService {
     });
   }
 
+  public async deleteNote(id: string): Promise<void> {
+    const db = await this.init();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('notes', 'readwrite');
+      tx.objectStore('notes').delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error('Note deletion was aborted'));
+    });
+  }
+
   public async queueAction(action: Omit<OfflineAction, 'id' | 'timestamp'>): Promise<void> {
     const db = await this.init();
     const fullAction: OfflineAction = {

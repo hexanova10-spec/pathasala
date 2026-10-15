@@ -40,6 +40,7 @@ export const OfflineCentreView: React.FC<OfflineCentreViewProps> = ({
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<string>('Just now');
   const [activeLesson, setActiveLesson] = useState<OfflineLesson | null>(null);
+  const [activeNote, setActiveNote] = useState<any | null>(null);
   const [recordings, setRecordings] = useState<ClassRecording[]>([]);
   const [cachedRecordingIds, setCachedRecordingIds] = useState<string[]>([]);
   const [activeRecording, setActiveRecording] = useState<{ id: string; title: string; src: string } | null>(null);
@@ -143,6 +144,17 @@ export const OfflineCentreView: React.FC<OfflineCentreViewProps> = ({
     await offlineStorage.deleteLesson(id);
     await loadData();
     if (activeLesson?.id === id) setActiveLesson(null);
+  };
+
+  const handleDeleteNote = async (id: string) => {
+    try {
+      await offlineStorage.deleteNote(id);
+      await loadData();
+      if (activeNote?.id === id) setActiveNote(null);
+    } catch (error) {
+      console.error('Could not delete saved study material:', error);
+      alert('Could not delete this saved material. Please try again.');
+    }
   };
 
   return (
@@ -262,6 +274,25 @@ export const OfflineCentreView: React.FC<OfflineCentreViewProps> = ({
         {recordings.filter((recording) => profile.assignedClasses.includes(recording.classNum)).length === 0 ? <p className="rounded-xl bg-slate-50 p-4 text-xs text-slate-500">No recordings published for your assigned classes yet.</p> : <div className="space-y-3">{recordings.filter((recording) => profile.assignedClasses.includes(recording.classNum)).map((recording) => <div key={recording.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-slate-200 p-4"><div><p className="font-bold text-sm text-slate-900">{recording.title}</p><p className="mt-1 text-xs text-slate-500">Class {recording.classNum} • {recording.subject}{recording.teacherName ? ` • ${recording.teacherName}` : ''}</p><p className="mt-1 text-[11px] text-emerald-700">{cachedRecordingIds.includes(recording.id) ? 'Saved for offline playback' : 'Not saved offline yet'}</p></div><div className="flex gap-2"><button type="button" onClick={() => void handlePlayRecording(recording)} className="rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white flex items-center gap-1"><PlayCircle className="w-4 h-4" /> Play</button><button type="button" disabled={recordingBusyId === recording.id || cachedRecordingIds.includes(recording.id)} onClick={() => void handleCacheRecording(recording)} className="rounded-xl border border-indigo-200 px-3 py-2 text-xs font-bold text-indigo-700 disabled:opacity-50 flex items-center gap-1"><Download className="w-4 h-4" />{recordingBusyId === recording.id ? 'Saving…' : cachedRecordingIds.includes(recording.id) ? 'Saved' : 'Save offline'}</button></div></div>)}</div>}
         {activeRecording && <div className="rounded-2xl border border-indigo-200 bg-slate-950 p-3 space-y-2"><div className="flex justify-between items-center text-white text-xs"><span className="font-bold">{activeRecording.title}</span><button type="button" onClick={() => { if (activeRecording.src.startsWith('blob:')) URL.revokeObjectURL(activeRecording.src); setActiveRecording(null); }} className="rounded-lg bg-white/15 px-2 py-1">Close video</button></div><video key={activeRecording.src} controls playsInline preload="metadata" className="w-full max-h-[420px] rounded-xl" src={activeRecording.src}>Your browser cannot play this video format.</video></div>}
       </div>
+
+      {/* Saved AI study materials */}
+      <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2"><BookOpen className="w-4 h-4 text-indigo-600" />Saved Study Materials (Available Offline)</h3>
+          <button type="button" onClick={() => void loadData()} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50">Refresh</button>
+        </div>
+        {notes.length === 0 ? <p className="rounded-2xl bg-slate-50 border border-dashed border-slate-300 p-5 text-sm text-slate-500">No saved AI materials yet. While online, generate notes in Study Studio and select “Save to Offline Notes”. They will appear here.</p> : (
+          <div className="space-y-3">
+            {notes.slice().sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))).map((note) => (
+              <div key={note.id} className="p-4 rounded-2xl border border-indigo-100 bg-indigo-50/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="min-w-0"><p className="font-bold text-sm text-slate-900 break-words">{note.title || note.topic || 'Saved study material'}</p><p className="mt-1 text-xs text-slate-500">Class {note.classNum} • {note.subject} • {note.createdAt ? new Date(note.createdAt).toLocaleString() : 'Saved locally'}</p><p className="mt-2 text-xs text-slate-600 line-clamp-2 whitespace-pre-wrap">{note.content}</p></div>
+                <div className="flex shrink-0 gap-2"><button type="button" onClick={() => setActiveNote(note)} className="rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white">Open material</button><button type="button" onClick={() => void handleDeleteNote(note.id)} title="Delete saved material" className="rounded-xl border border-rose-200 p-2 text-rose-600 hover:bg-rose-50"><Trash2 className="w-4 h-4" /></button></div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {activeNote && <div className="bg-white rounded-3xl p-6 border border-indigo-200 shadow-xl space-y-4"><div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3"><div><p className="text-xs font-bold text-indigo-600">Saved for offline use • Class {activeNote.classNum} • {activeNote.subject}</p><h2 className="mt-1 text-lg font-bold text-slate-900">{activeNote.title || activeNote.topic}</h2></div><button type="button" onClick={() => setActiveNote(null)} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-600">Close</button></div><div className="rounded-2xl bg-slate-50 border border-slate-200 p-4 text-sm leading-relaxed whitespace-pre-wrap text-slate-800">{activeNote.content}</div></div>}
 
       {/* Cached Lessons List */}
       <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
