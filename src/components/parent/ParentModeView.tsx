@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { StudentProfile } from '../../types';
 import { INITIAL_PARENT_REPORTS } from '../../data/mockStore';
 import {
@@ -28,9 +28,62 @@ export const ParentModeView: React.FC<ParentModeViewProps> = ({
   onNavigateToHomework
 }) => {
   const latestReport = INITIAL_PARENT_REPORTS[0];
+  const [linkedChildren, setLinkedChildren] = useState<any[]>([]);
+  const [childSyncStatus, setChildSyncStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadChildren = async () => {
+      try {
+        const token = localStorage.getItem('pathashala_token');
+        const response = await fetch('/api/parent/children', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not load linked student profile.');
+        if (!cancelled) {
+          setLinkedChildren(Array.isArray(data.children) ? data.children : []);
+          setChildSyncStatus('ready');
+        }
+      } catch {
+        if (!cancelled) setChildSyncStatus('error');
+      }
+    };
+    void loadChildren();
+    const timer = window.setInterval(() => { void loadChildren(); }, 15000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
+      <section className="rounded-3xl border border-[#D5E9DC] bg-white p-5 shadow-sm space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-black text-[#18352A]">Live Linked Student Profile</h2>
+            <p className="text-xs text-[#64776B]">Synced from the student account: class, school, subjects and language.</p>
+          </div>
+          <span className="rounded-full bg-[#E8F5EC] px-3 py-1 text-xs font-bold text-[#006A4E]">
+            {childSyncStatus === "loading" ? "Syncing…" : childSyncStatus === "error" ? "Sync unavailable" : "Auto-refresh: 15 sec"}
+          </span>
+        </div>
+        {childSyncStatus === "error" ? (
+          <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">Could not load linked student data. Check your parent account link and backend connection.</p>
+        ) : linkedChildren.length === 0 && childSyncStatus === "ready" ? (
+          <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">No student is linked to this parent account yet. When registering as a parent, enter the student ID in the Student ID field.</p>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {linkedChildren.map((child) => (
+              <article key={child.id} className="rounded-2xl border border-[#E1EEE5] bg-[#FAFDFB] p-4">
+                <p className="font-bold text-[#18352A]">{child.name}</p>
+                <p className="mt-1 text-xs text-[#64776B]">{child.identifier || child.id} · Class {child.classNum}</p>
+                <p className="mt-2 text-xs text-[#18352A]">{child.school || child.profile?.schoolName || "School not provided"}</p>
+                <p className="mt-1 text-xs text-[#64776B]">Subjects: {(child.profile?.subjects || [child.preferredSubject || "Mathematics"]).join(", ")}</p>
+                <p className="mt-1 text-xs text-[#64776B]">Learning language: {child.preferredLanguage || "Odia"}</p>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
       {/* Header */}
       <div className="bg-gradient-to-r from-[#004B38] via-[#006A4E] to-[#0B8457] rounded-3xl p-6 sm:p-8 text-white shadow-xl shadow-[#004B38]/15 border border-[#D5E9DC]/30 relative overflow-hidden">
         <div className="absolute -top-12 -right-12 w-48 h-48 bg-[#DFF3E8]/20 rounded-full blur-2xl pointer-events-none" />
