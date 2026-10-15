@@ -42,6 +42,34 @@ export const TeacherReportsView: React.FC<TeacherReportsViewProps> = ({ role, pr
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [publishSuccessNotice, setPublishSuccessNotice] = useState<string | null>(null);
 
+  useEffect(() => {
+    let cancelled = false;
+    const loadReports = async () => {
+      const token = localStorage.getItem('pathashala_token');
+      if (!token) return;
+      try {
+        const response = await fetch('/api/reports', { headers: { Authorization: `Bearer ${token}` } });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not load reports.');
+        if (cancelled) return;
+        if (role === 'teacher' && Array.isArray(data.studentReports) && data.studentReports.length) {
+          setStudentReports((current) => {
+            const serverReports = data.studentReports as StudentReport[];
+            const serverIds = new Set(serverReports.map((item) => item.id));
+            return [...serverReports, ...current.filter((item) => !serverIds.has(item.id))];
+          });
+        }
+        if (role === 'parent' && Array.isArray(data.parentReports)) {
+          setParentReports(data.parentReports as ParentReport[]);
+        }
+      } catch (error) {
+        if (!cancelled) console.warn('Reports could not be refreshed from the server:', error);
+      }
+    };
+    void loadReports();
+    return () => { cancelled = true; };
+  }, [role]);
+
   // New report form states
   const [reportStudentName, setReportStudentName] = useState('Subhashree Nayak');
   const [reportClassNum, setReportClassNum] = useState(10);
