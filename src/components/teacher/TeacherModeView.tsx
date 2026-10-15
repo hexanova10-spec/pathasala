@@ -39,6 +39,31 @@ export const TeacherModeView: React.FC<TeacherModeViewProps> = ({
   onNavigateToActivity
 }) => {
   const [selectedTab, setSelectedTab] = useState<'overview' | 'planner' | 'students'>('overview');
+  const [liveStudents, setLiveStudents] = useState<any[]>([]);
+  const [rosterStatus, setRosterStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadRoster = async () => {
+      try {
+        const token = localStorage.getItem('pathashala_token');
+        const response = await fetch('/api/teacher/students', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not load the class roster.');
+        if (!cancelled) {
+          setLiveStudents(Array.isArray(data.students) ? data.students : []);
+          setRosterStatus('ready');
+        }
+      } catch {
+        if (!cancelled) setRosterStatus('error');
+      }
+    };
+    void loadRoster();
+    const timer = window.setInterval(() => { void loadRoster(); }, 15000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
 
   // Lesson planner states
   const [selectedClass, setSelectedClass] = useState(10);
@@ -117,6 +142,36 @@ export const TeacherModeView: React.FC<TeacherModeViewProps> = ({
           </p>
         </div>
       </div>
+
+      {/* Live roster synced from student accounts in the shared backend database */}
+      <section className="rounded-3xl border border-[#D5E9DC] bg-white p-5 shadow-sm space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-black text-[#18352A]">Live Student Profiles</h2>
+            <p className="text-xs text-[#64776B]">Student name, class, school, subjects and language update from registered student accounts.</p>
+          </div>
+          <span className="rounded-full bg-[#E8F5EC] px-3 py-1 text-xs font-bold text-[#006A4E]">
+            {rosterStatus === 'loading' ? 'Syncing…' : rosterStatus === 'error' ? 'Sync unavailable' : `${liveStudents.length} linked students`}
+          </span>
+        </div>
+        {rosterStatus === 'error' ? (
+          <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">Student profiles could not be loaded. Check that you are signed in and the backend is deployed.</p>
+        ) : liveStudents.length === 0 && rosterStatus === 'ready' ? (
+          <p className="rounded-xl bg-[#F4FBF6] p-3 text-sm text-[#64776B]">No registered students match your assigned classes and school yet.</p>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {liveStudents.map((student) => (
+              <article key={student.id} className="rounded-2xl border border-[#E1EEE5] bg-[#FAFDFB] p-4">
+                <p className="font-bold text-[#18352A]">{student.name}</p>
+                <p className="mt-1 text-xs text-[#64776B]">{student.identifier || student.id} · Class {student.classNum}</p>
+                <p className="mt-2 text-xs text-[#18352A]">{student.school || student.profile?.schoolName || 'School not provided'}</p>
+                <p className="mt-1 text-xs text-[#64776B]">Subjects: {(student.profile?.subjects || [student.preferredSubject || 'Mathematics']).join(', ')}</p>
+                <p className="mt-1 text-xs text-[#64776B]">Language: {student.preferredLanguage || 'Odia'}</p>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* Teacher Navigation Tabs */}
       <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none text-xs font-bold">
